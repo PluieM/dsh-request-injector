@@ -1,0 +1,52 @@
+{
+  "name": "dsh-request-injector",
+  "version": "0.1.0",
+  "description": "按 provider / model / host 匹配注入请求头，支持占位符运行时替换与插件页配置 UI",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/",
+    "locale/*.json",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test --experimental-test-isolation=none test/",
+    "lint": "node --check lib/backend-fetch.js && node --check lib/backend-headers.js && node --check lib/client.js && node --check lib/context.js && node --check lib/errors.js && node --check lib/index.js && node --check lib/log.js && node --check lib/probe.js && node --check lib/rules.js && node --check lib/schema.js && node --check lib/template.js",
+    "pack": "npm pack --dry-run"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.2-rc.1": "compatible"
+      }
+    }
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "request-headers"
+  ],
+  "license": "MIT"
+}

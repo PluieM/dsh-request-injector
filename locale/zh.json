@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "请求头注入",
+    "description": "按 provider / model / host 匹配注入请求头，值支持占位符运行时替换"
+  }
+}

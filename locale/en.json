@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Request Header Injector",
+    "description": "Inject request headers matched by provider / model / host, with runtime placeholder substitution"
+  }
+}

@@ -1,0 +1,14 @@
+# dsh-request-injector 的 Loader 行。
+#
+# 硬约束：id 与 name 必须都等于包名。
+#  - dsh-client-modules 按「Loader 行的包名」对账客户端半侧，name 不符则 lib/client.js 不加载
+#  - settings 表单的 namespace 取 row id，与插件自报的 ctx.fiber.entry.options.id 必须是同一个
+- insert:
+    - id: dsh-request-injector
+      name: dsh-request-injector
+      config:
+        enabled: true
+        backend: auto
+        rules: []
+        onMissingVariable: skip
+        debug: false
