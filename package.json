@@ -1,6 +1,6 @@
 {
   "name": "dsh-request-injector",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "按 provider / model / host 匹配注入请求头，支持占位符运行时替换与插件页配置 UI",
   "type": "module",
   "main": "lib/index.js",
@@ -52,5 +52,14 @@
     "dsh-plugin",
     "request-headers"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PluieM/dsh-request-injector.git"
+  },
+  "homepage": "https://github.com/PluieM/dsh-request-injector#readme",
+  "bugs": {
+    "url": "https://github.com/PluieM/dsh-request-injector/issues"
+  },
+  "author": "PluieM <zcfgfanny@msn.cn>",
   "license": "MIT"
 }
