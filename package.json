@@ -1,6 +1,6 @@
 {
   "name": "dsh-request-injector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "按 provider / model / host 匹配注入请求头，支持占位符运行时替换与插件页配置 UI",
   "type": "module",
   "main": "lib/index.js",

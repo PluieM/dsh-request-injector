@@ -32,13 +32,20 @@ test('bundle 以包名注册', () => {
   assert.equal(typeof captured.factory, 'function')
 })
 
-test('导出的 inject 声明 slots 与 locale', () => {
-  assert.deepEqual(bundle.inject, ['slots', 'locale'])
+test('导出的 inject 声明 slots / locale / configForms', () => {
+  assert.deepEqual(bundle.inject, ['slots', 'locale', 'configForms'])
   assert.equal(typeof bundle.apply, 'function')
 })
 
-test('apply 注册 locale 与 plugins.row.config 槽位', () => {
-  const calls = { locale: [], slots: [], effects: [] }
+/** 最小 ctx 替身：configForms 可省略，用于覆盖降级路径 */
+function makeCtx(options = {}) {
+  const calls = { locale: [], slots: [], effects: [], namespaces: [] }
+  const controller = {
+    getSnapshot: () => ({ status: 'loading', value: undefined, writable: false }),
+    subscribe: () => () => {},
+    mutate: (ops, revision) => Promise.resolve(true),
+  }
+  const registrations = () => calls.slots.filter((entry) => typeof entry === 'object')
   const ctx = {
     effect: (factory, label) => { calls.effects.push(label); return factory() },
     locale: {
@@ -49,6 +56,16 @@ test('apply 注册 locale 与 plugins.row.config 槽位', () => {
       register: (options, component) => { calls.slots.push({ options, component }); return () => {} },
     },
   }
+  if (options.configForms !== false) {
+    ctx.configForms = {
+      get: (namespace) => { calls.namespaces.push(namespace); return controller },
+    }
+  }
+  return { ctx, calls, controller, registrations }
+}
+
+test('apply 注册 locale 与 plugins.row.config 槽位', () => {
+  const { ctx, calls, registrations } = makeCtx()
   bundle.apply(ctx)
 
   assert.equal(calls.locale.length, 1)
@@ -56,12 +73,39 @@ test('apply 注册 locale 与 plugins.row.config 槽位', () => {
   assert.ok(calls.locale[0].dict.zh && calls.locale[0].dict.en)
 
   assert.ok(calls.slots.includes('plugins.row.config'))
-  const registration = calls.slots.find((entry) => typeof entry === 'object')
-  assert.equal(registration.options.name, 'plugins.row.config')
+  const registration = registrations().find((entry) => entry.options.name === 'plugins.row.config')
   // 行 id 与包名相同：行详情页用行 id 作为 settings namespace 查表单
   assert.equal(registration.options.key, 'dsh-request-injector#dsh-request-injector')
   assert.equal(registration.options.locale, 'dsh-request-injector')
   assert.equal(typeof registration.component, 'function')
+})
+
+test('apply 在设置面板注册直达分区，并复用同一个配置 namespace', () => {
+  const { ctx, calls, controller, registrations } = makeCtx()
+  bundle.apply(ctx)
+
+  assert.ok(calls.slots.includes('settings.section'))
+  const section = registrations().find((entry) => entry.options.name === 'settings.section')
+  assert.equal(section.options.id, 'dsh-request-injector')
+  assert.equal(section.options.locale, 'dsh-request-injector')
+  // 与行详情页共用 ROW_ID 作为 namespace，两边读写同一份配置
+  assert.deepEqual(calls.namespaces, ['dsh-request-injector'])
+  // label 是函数，供宿主按当前语言解析
+  assert.equal(typeof section.options.label, 'function')
+  assert.equal(section.options.label(), '请求头注入')
+
+  // inject() 把控制器暴露为 hooks.configForm（宿主映射成 useConfigForm prop），
+  // 并原样透传 mutate
+  const injection = section.options.inject()
+  assert.equal(injection.hooks.configForm, controller)
+  assert.equal(injection.mutate({}, 1).constructor, Promise)
+})
+
+test('缺少 configForms 服务时跳过设置分区，不影响行详情页', () => {
+  const { ctx, calls } = makeCtx({ configForms: false })
+  assert.doesNotThrow(() => bundle.apply(ctx))
+  assert.ok(!calls.slots.includes('settings.section'))
+  assert.ok(calls.slots.includes('plugins.row.config'))
 })
 
 test('apply 在缺少 slots / locale 服务时安全退出', () => {

@@ -6,7 +6,7 @@ Typical uses: attaching a session header to a self-hosted gateway, tagging per-m
 
 ## Screenshots
 
-The config page (Plugin Manager → the "Request Header Injector" row) holds the basic settings, the rule cards and the variable quick-reference card.
+The config page (Settings → "Request headers") holds the basic settings, the rule cards and the variable quick-reference card. The same configuration is also reachable from Plugin Manager → the "dsh-request-injector" row detail; both entries read and write the same namespace.
 
 <!-- screenshot slot: place the image at docs/images/plugin-config.png -->
 ![Plugin config page](docs/images/plugin-config.png)
