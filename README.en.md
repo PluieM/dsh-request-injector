@@ -62,10 +62,10 @@ The config section is declared volatile: saving in the plugin page takes effect 
 ## Installation
 
 ```
-dsh plugin install github:<user>/dsh-request-injector
+dsh plugin install PluieM/dsh-request-injector
 ```
 
-Or use "Add plugin" in Plugin Manager with `github:<user>/dsh-request-injector`. The package ships prebuilt `lib/index.js` (host) and `lib/client.js` (web client); no build step is required.
+Or use "Add plugin" in Plugin Manager with `PluieM/dsh-request-injector`. The package ships prebuilt `lib/index.js` (host) and `lib/client.js` (web client); no build step is required.
 
 ## Quick start
 

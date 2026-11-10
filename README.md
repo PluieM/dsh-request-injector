@@ -62,10 +62,10 @@ flowchart LR
 ## 安装
 
 ```
-dsh plugin install github:<你的用户名>/dsh-request-injector
+dsh plugin install PluieM/dsh-request-injector
 ```
 
-或在插件管理器「添加插件」中填 `github:<你的用户名>/dsh-request-injector`。包内已包含可直接加载的 `lib/index.js`（Host）与 `lib/client.js`（Web 客户端），无需构建步骤。
+或在插件管理器「添加插件」中填 `PluieM/dsh-request-injector`。包内已包含可直接加载的 `lib/index.js`（Host）与 `lib/client.js`（Web 客户端），无需构建步骤。
 
 ## 快速上手
 
