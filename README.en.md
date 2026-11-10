@@ -36,7 +36,9 @@ The plugin hooks into two points on this path because neither backend covers eve
 | A · extension point | every transport of the pi-ai adapter, websocket included | cannot see the real target URL; non-pi-ai adapters such as `llm-deepseek` and model-listing never reach it |
 | B · fetch wrapper | every path that goes through `globalThis.fetch`, with exact host matching | the websocket handshake does not go through fetch |
 
-The default `backend: auto` enables both: rules already injected by backend A are recorded in that request's context and skipped by backend B, so nothing is written twice.
+The default `backend: auto` enables both. They match the same rules and write the same values, so a rule applied by both backends produces no difference (`Headers.set` is idempotent for equal values) and no cross-backend bookkeeping is needed.
+
+One boundary of backend B is worth knowing: `provider` / `model` only have values when a request happens inside an LLM call. Requests that sit **outside** an LLM call — model listing, for instance — have no such context, and there **only rules that explicitly set `host` match**. This is a deliberate safety boundary: it keeps headers meant for one provider (a session key, say) from being injected into every `fetch` the process makes.
 
 ## Configuration flow
 
@@ -52,10 +54,10 @@ The config section is declared volatile: saving in the plugin page takes effect 
 
 ## Features
 
-- Three match dimensions: `provider` exact, `model` exact or prefix with a trailing `*`, `host` against the real target host
+- Three match dimensions: `provider` exact, `model` exact or prefix with a trailing `*`, `host` against the real target host (case-insensitive)
 - Placeholders in header values, e.g. `x-opencode-session: ${sessionId}`, `x-trace-id: ${uuid}`; no recursive expansion, `$$` emits a literal `$`
 - Missing-variable policy `skip` (drop the header) / `empty` (substitute an empty string) / `error` (fail the request)
-- Two selectable injection backends, de-duplicated per rule under `auto`
+- Two selectable injection backends; under `auto` both run, and outside an LLM call only explicit `host` rules match
 - Visual form in the plugin page: add/remove/reorder rules, per-header validation, a variable quick-reference card, whole-config submission with revision conflict detection
 - Reserved-header protection: headers owned by the HTTP stack or the host (`authorization`, `host`, `content-length`, `x-dsh-*`, …) are refused
 

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { RuleStore, isReserved, isUsableHeaderName, isUsableHeaderValue, matches, matchString, matchModel } from '../../lib/rules.js'
+import { RuleStore, isReserved, isUsableHeaderName, isUsableHeaderValue, matches, matchString, matchModel, matchHost } from '../../lib/rules.js'
 
 const storeOf = (rules) => new RuleStore(() => ({ rules }))
 
@@ -111,9 +111,42 @@ test('matchString 两侧空白都被裁剪', () => {
   assert.equal(matchString(' p ', 'p'), true)
 })
 
-test('ruleKey 带上实例序号，避免跨实例撞 id', () => {
-  const a = new RuleStore(() => ({}))
-  const b = new RuleStore(() => ({}))
-  assert.notEqual(a.ruleKey('rule-1'), b.ruleKey('rule-1'))
-  assert.equal(a.ruleKey('rule-1'), a.ruleKey('rule-1'))
+test('matchHost 不计大小写，与 URL 规范化后的 host 对齐', () => {
+  // URL 解析必然把 host 小写化，配置里手写大写不能让规则永不命中
+  assert.equal(matchHost('API.Example.com', 'api.example.com'), true)
+  assert.equal(matchHost('api.example.com', 'API.Example.COM'), true)
+  assert.equal(matchHost('api.example.com:8443', 'api.example.com:8443'), true)
+  assert.equal(matchHost('api.example.com', 'other.example.com'), false)
+})
+
+test('matchHost 空条件命中任何 host（含 undefined）', () => {
+  assert.equal(matchHost('', 'api.example.com'), true)
+  assert.equal(matchHost(undefined, undefined), true)
+  assert.equal(matchHost('  ', 'h'), true)
+})
+
+test('无 llm/stream 上下文时只允许显式 host 规则命中（H1 修复）', () => {
+  const noContext = { host: 'api.example.com', contextAvailable: false }
+  // 全通配规则不得命中：否则会把密钥头注入进程内任意 fetch
+  assert.equal(matches({}, noContext), false)
+  assert.equal(matches({ provider: 'p', model: 'm', host: '' }, noContext), false)
+  // 显式写了 host 的规则仍命中，供模型探测等非 stream 路径使用
+  assert.equal(matches({ host: 'api.example.com' }, noContext), true)
+  // host 不匹配则不命中
+  assert.equal(matches({ host: 'other.example.com' }, noContext), false)
+  // host 与 provider 同时写时，无上下文只按 host 判定，provider 不参与
+  assert.equal(matches({ provider: 'p', host: 'api.example.com' }, noContext), true)
+})
+
+test('有 llm/stream 上下文时三个维度照常参与匹配', () => {
+  const inContext = { provider: 'p', model: 'm', host: 'h', contextAvailable: true }
+  assert.equal(matches({}, inContext), true)
+  assert.equal(matches({ provider: 'p' }, inContext), true)
+  assert.equal(matches({ provider: 'x' }, inContext), false)
+  assert.equal(matches({ model: 'm', host: 'h' }, inContext), true)
+})
+
+test('contextAvailable 省略时按有上下文处理（后端 A 只在 stream 内触发）', () => {
+  assert.equal(matches({}, { provider: 'p' }), true)
+  assert.equal(matches({ provider: 'x' }, { provider: 'p' }), false)
 })

@@ -125,7 +125,7 @@ test('ALS 上下文在 generator body 内可用（端到端）', async () => {
   assert.equal(seenInBody?.provider, 'newapi-responses')
 })
 
-test('两个后端在同一次请求里协作，且同一规则不重复注入', async () => {
+test('两个后端在同一次请求里协作，同一条规则只写一次头', async () => {
   const { ctx, listeners } = makeCtx()
   const host = makeHostCall({ listeners })
   apply(ctx, config)
@@ -141,7 +141,7 @@ test('两个后端在同一次请求里协作，且同一规则不重复注入',
 
   assert.equal(host.fetched.length, 1)
   const headers = host.fetched[0].headers
-  // 后端 A 已注入，后端 B 去重后不再重复写（值相同即视为一致）
+  // 两条规则都命中：值由占位符渲染而来，两个后端写入同值不会互相破坏
   assert.equal(headers.get('x-session'), 'ses-abc')
   assert.equal(headers.get('x-static'), 'v1')
 })
@@ -160,17 +160,19 @@ test('后端 A 未覆盖的路径（如模型探测）由后端 B 兜底', async
   assert.equal(headers, undefined, '无命中规则时不应改写请求头')
 })
 
-test('无 ALS 上下文时只有不限 provider/model 的规则（如仅 host）能命中', async () => {
+test('无 ALS 上下文时只有显式写了 host 的规则能命中', async () => {
   const { ctx, listeners } = makeCtx()
   const host = makeHostCall({ listeners })
   // 这条限制很重要：discoverModels 不走 llm/stream，没有 provider/model 上下文，
   // 因此带 provider/model 约束的规则即使在 fetch 后端也命中不了；
-  // 想在探测请求上也注入，规则只能约束 host（或不约束）。
+  // 想在探测请求上也注入，规则必须显式约束 host——只写 provider/model 不行，
+  // 什么都不写的全通配规则同样不命中，否则密钥头会被注入进程内任意 fetch。
   apply(ctx, {
     ...config,
     rules: [
       { id: 'by-provider', match: { provider: 'newapi-responses' }, headers: { 'x-by-provider': '1' }, order: 0 },
       { id: 'by-host', match: { host: 'api.example.com' }, headers: { 'x-by-host': '1' }, order: 10 },
+      { id: 'catch-all', match: {}, headers: { 'x-catch-all': '1' }, order: 20 },
     ],
   })
 
@@ -180,6 +182,7 @@ test('无 ALS 上下文时只有不限 provider/model 的规则（如仅 host）
   const headers = new Headers(host.fetched[0].headers)
   assert.equal(headers.has('x-by-provider'), false, 'provider 规则需要 llm/stream 上下文')
   assert.equal(headers.get('x-by-host'), '1', 'host 规则不依赖上下文')
+  assert.equal(headers.has('x-catch-all'), false, '全通配规则在无上下文时不得命中')
 })
 
 test('backend: headers 时后端 B 完全放行', async () => {

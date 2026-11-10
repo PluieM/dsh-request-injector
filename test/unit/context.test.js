@@ -7,10 +7,17 @@ function fakeCtx() {
   const handlers = new Map()
   return {
     handlers,
-    on(name, listener) {
-      handlers.set(name, listener)
-      const dispose = () => handlers.delete(name)
-      return dispose
+    on(name, listener, options) {
+      handlers.set(name, { listener, options })
+      return () => handlers.delete(name)
+    },
+    /** 取出注册的监听器（cordis 的真实形状是 {listener, options}） */
+    listener(name) {
+      return handlers.get(name)?.listener
+    },
+    /** 取出注册时的选项，用于断言 { global: true } 真的被透传 */
+    optionsOf(name) {
+      return handlers.get(name)?.options
     },
   }
 }
@@ -33,10 +40,16 @@ test('监听器注册在 llm/stream 上', () => {
   assert.equal(ctx.handlers.has('llm/stream'), true)
 })
 
+test('监听器以 { global: true } 注册（否则拿不到别的 fiber 上的 stream）', () => {
+  const ctx = fakeCtx()
+  registerStreamContext(ctx)
+  assert.deepEqual(ctx.optionsOf('llm/stream'), { global: true })
+})
+
 test('监听器返回可 for-await 的迭代器', async () => {
   const ctx = fakeCtx()
   registerStreamContext(ctx)
-  const iterator = runThrough(ctx.handlers.get('llm/stream'), { sessionId: 's1' })
+  const iterator = runThrough(ctx.listener('llm/stream'), { sessionId: 's1' })
   const seen = []
   for await (const chunk of iterator) seen.push(chunk)
   assert.deepEqual(seen, ['a', 'b'])
@@ -45,7 +58,7 @@ test('监听器返回可 for-await 的迭代器', async () => {
 test('迭代器在消费时仍能取到 ALS 上下文（核心断言）', async () => {
   const ctx = fakeCtx()
   registerStreamContext(ctx)
-  const iterator = runThrough(ctx.handlers.get('llm/stream'), {
+  const iterator = runThrough(ctx.listener('llm/stream'), {
     sessionId: 's1',
     provider: 'p1',
     model: 'm1',
@@ -71,7 +84,7 @@ test('generator body 内的 getStore 能拿到完整上下文', async () => {
     yield 2
   }
 
-  const iterator = ctx.handlers.get('llm/stream')(
+  const iterator = ctx.listener('llm/stream')(
     { sessionId: 's1', provider: 'p1', model: 'm1', purpose: 'chat' },
     () => capturing(),
   )
@@ -101,15 +114,15 @@ test('嵌套 await 之后的 fetch 仍在上下文内（模拟真实延迟执行
     yield await helper1()
   }
 
-  const iterator = ctx.handlers.get('llm/stream')({ sessionId: 'deep-session' }, () => deep())
+  const iterator = ctx.listener('llm/stream')({ sessionId: 'deep-session' }, () => deep())
   const first = await iterator.next()
   assert.equal(first.value, 'deep-session')
 })
 
-test('appliedRuleIds 是每个请求独立的 Set', async () => {
+test('store 是每个请求独立的对象', async () => {
   const ctx = fakeCtx()
   registerStreamContext(ctx)
-  const handler = ctx.handlers.get('llm/stream')
+  const handler = ctx.listener('llm/stream')
 
   const stores = []
   async function* capture() {
@@ -120,9 +133,9 @@ test('appliedRuleIds 是每个请求独立的 Set', async () => {
   const b = handler({ sessionId: 'b' }, () => capture())
   await a.next()
   await b.next()
-  assert.notEqual(stores[0].appliedRuleIds, stores[1].appliedRuleIds)
-  stores[0].appliedRuleIds.add('rule-1')
-  assert.equal(stores[1].appliedRuleIds.has('rule-1'), false)
+  assert.notEqual(stores[0], stores[1])
+  assert.equal(stores[0].sessionId, 'a')
+  assert.equal(stores[1].sessionId, 'b')
 })
 
 test('return() 在上下文内执行', async () => {
@@ -137,7 +150,7 @@ test('return() 在上下文内执行', async () => {
       seen.push(getStore()?.sessionId)
     }
   }
-  const iterator = ctx.handlers.get('llm/stream')({ sessionId: 'ret-1' }, () => gen())
+  const iterator = ctx.listener('llm/stream')({ sessionId: 'ret-1' }, () => gen())
   await iterator.next()
   await iterator.return()
   assert.deepEqual(seen, ['ret-1'])
@@ -146,7 +159,7 @@ test('return() 在上下文内执行', async () => {
 test('下游无 return/throw 时给出安全兜底', async () => {
   const ctx = fakeCtx()
   registerStreamContext(ctx)
-  const iterator = ctx.handlers.get('llm/stream')({}, () => ({ next: async () => ({ done: true, value: undefined }) }))
+  const iterator = ctx.listener('llm/stream')({}, () => ({ next: async () => ({ done: true, value: undefined }) }))
   assert.deepEqual(await iterator.return(), { done: true, value: undefined })
   await assert.rejects(() => iterator.throw(new Error('boom')), /boom/)
 })
@@ -154,6 +167,6 @@ test('下游无 return/throw 时给出安全兜底', async () => {
 test('选项缺失时不抛错', async () => {
   const ctx = fakeCtx()
   registerStreamContext(ctx)
-  const iterator = ctx.handlers.get('llm/stream')(undefined, () => ({ next: async () => ({ done: true }) }))
+  const iterator = ctx.listener('llm/stream')(undefined, () => ({ next: async () => ({ done: true }) }))
   await iterator.next()
 })

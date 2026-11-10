@@ -1,6 +1,6 @@
 {
   "name": "dsh-request-injector",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "按 provider / model / host 匹配注入请求头，支持占位符运行时替换与插件页配置 UI",
   "type": "module",
   "main": "lib/index.js",
@@ -19,7 +19,8 @@
     "README.md",
     "README.en.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/images/"
   ],
   "scripts": {
     "test": "node --test --experimental-test-isolation=none test/",
@@ -39,6 +40,9 @@
         "0.2.2-rc.1": "compatible"
       }
     }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": ">=3.18.2 <4.0.0"
   },
   "engines": {
     "node": ">=22.19.0"

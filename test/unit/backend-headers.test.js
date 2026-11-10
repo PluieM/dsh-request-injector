@@ -8,9 +8,17 @@ function fakeCtx() {
   const handlers = new Map()
   return {
     handlers,
-    on(name, listener) {
-      handlers.set(name, listener)
+    on(name, listener, options) {
+      handlers.set(name, { listener, options })
       return () => handlers.delete(name)
+    },
+    /** 取出注册的监听器（cordis 的真实形状是 {listener, options}） */
+    listener(name) {
+      return handlers.get(name)?.listener
+    },
+    /** 取出注册时的选项，用于断言 { global: true } 真的被透传 */
+    optionsOf(name) {
+      return handlers.get(name)?.options
     },
   }
 }
@@ -42,8 +50,13 @@ function setup(config, { log = fakeLog() } = {}) {
   const ctx = fakeCtx()
   const store = new RuleStore(() => config)
   registerHeadersBackend(ctx, { store, log })
-  return { handler: ctx.handlers.get('llm-pi-ai/request-headers'), log }
+  return { handler: ctx.listener('llm-pi-ai/request-headers'), log, ctx }
 }
+
+test('监听器以 { global: true } 注册（否则看不到别的 fiber 上的 stream）', () => {
+  const { ctx } = setup({ enabled: true, rules: [] })
+  assert.deepEqual(ctx.optionsOf('llm-pi-ai/request-headers'), { global: true })
+})
 
 const REQUEST = Object.freeze({ provider: 'newapi-responses', model: 'deepseek-v4-flash', baseURL: 'https://api.example.com', sessionId: 'sess-1' })
 
@@ -187,7 +200,7 @@ test('注入阶段抛错时吞掉并调用 next（下游未被调用过）', () 
   assert.equal(log.records.some((r) => String(r.message).includes('header rejected')), true)
 })
 
-test('注入成功的规则记为 appliedRuleIds（供后端 B 去重）', async () => {
+test('规则命中时把 header 写进宿主传入的 Headers', async () => {
   const { registerStreamContext } = await import('../../lib/context.js')
   const ctx = fakeCtx()
   const store = new RuleStore(() => ({
@@ -197,24 +210,21 @@ test('注入成功的规则记为 appliedRuleIds（供后端 B 去重）', async
   registerHeadersBackend(ctx, { store, log: fakeLog() })
   registerStreamContext(ctx)
 
-  const headersHandler = ctx.handlers.get('llm-pi-ai/request-headers')
-  const streamHandler = ctx.handlers.get('llm/stream')
-  let applied = null
+  const headersHandler = ctx.listener('llm-pi-ai/request-headers')
+  const streamHandler = ctx.listener('llm/stream')
+  const headers = new Headers()
 
   async function* downstream() {
     // 在 generator body 里执行 = 处于 ALS 上下文内（模拟宿主的真实时序）
-    const headers = new Headers()
     headersHandler(REQUEST, headers, () => headers)
     yield null
   }
   const iterator = streamHandler({ sessionId: 'sess-1' }, () => downstream())
-  applied = iterator.store.appliedRuleIds
   await iterator.next()
-  // 键带 RuleStore 实例序号：ALS store 跨实例共享，裸 rule.id 会撞
-  assert.deepEqual([...applied], [store.ruleKey('r1')])
+  assert.equal(headers.get('x-a'), '1')
 })
 
-test('规则全部因保留头被跳过时不记录 appliedRuleIds', async () => {
+test('规则全部因保留头被跳过时 next 仍被调用，且不写入任何头', async () => {
   const { registerStreamContext } = await import('../../lib/context.js')
   const ctx = fakeCtx()
   const store = new RuleStore(() => ({
@@ -224,13 +234,18 @@ test('规则全部因保留头被跳过时不记录 appliedRuleIds', async () =>
   registerHeadersBackend(ctx, { store, log: fakeLog() })
   registerStreamContext(ctx)
 
-  const headersHandler = ctx.handlers.get('llm-pi-ai/request-headers')
+  const headersHandler = ctx.listener('llm-pi-ai/request-headers')
+  const headers = new Headers()
+  let nextCalls = 0
   async function* downstream() {
-    const headers = new Headers()
-    headersHandler(REQUEST, headers, () => headers)
+    headersHandler(REQUEST, headers, () => {
+      nextCalls += 1
+      return headers
+    })
     yield null
   }
-  const iterator = ctx.handlers.get('llm/stream')({ sessionId: 'sess-1' }, () => downstream())
+  const iterator = ctx.listener('llm/stream')({ sessionId: 'sess-1' }, () => downstream())
   await iterator.next()
-  assert.deepEqual([...iterator.store.appliedRuleIds], [])
+  assert.equal(nextCalls, 1)
+  assert.equal(headers.has('host'), false)
 })

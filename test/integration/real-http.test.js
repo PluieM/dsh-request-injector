@@ -1,12 +1,16 @@
-import test from 'node:test'
+import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import { apply } from '../../lib/index.js'
+import { resetFetchBackendForTests } from '../../lib/backend-fetch.js'
 
 /**
  * 用真实 HTTP 服务器验证后端 B：不是 mock fetch，而是真发请求、真收头。
  * 这是「包装 globalThis.fetch 能生效」最接近生产的验证。
  */
+
+// fetch 包装层链表是模块级状态，必须逐用例复位，否则后续用例会走「串联已有包装」分支
+beforeEach(() => resetFetchBackendForTests())
 
 function listen() {
   return new Promise((resolve) => {
@@ -33,11 +37,17 @@ function listen() {
 
 function makeCtx() {
   const logger = { debug() {}, info() {}, warn() {}, error() {} }
+  // 记下注册过的监听器与 disposer：apply 返回后要能整体撤销，
+  // 否则同进程里上一个用例的 llm/stream 监听器会串到下一个用例
+  const listeners = new Map()
+  const disposers = []
   return {
     logger,
+    listeners,
     fiber: { entry: { options: { id: 'dsh-request-injector' } } },
     effect: (factory) => {
       const disposer = factory()
+      if (typeof disposer === 'function') disposers.push(disposer)
       return () => typeof disposer === 'function' && disposer()
     },
     inject: (_deps, callback) => {
@@ -47,7 +57,15 @@ function makeCtx() {
         settings: { configure: () => () => {} },
       })
     },
-    on: () => () => {},
+    on(name, listener, options) {
+      listeners.set(name, { listener, options })
+      return () => listeners.delete(name)
+    },
+    /** 撤销本次 apply 注册的一切 */
+    dispose() {
+      for (const dispose of disposers.splice(0)) dispose()
+      listeners.clear()
+    },
   }
 }
 
@@ -78,6 +96,7 @@ test('真实请求上按 host 注入请求头（后端 B）', async () => {
     assert.equal(response.status, 200)
     await response.text()
   } finally {
+    ctx.dispose()
     globalThis.fetch = original
   }
 
@@ -106,6 +125,7 @@ test('真实请求上未命中的 host 不注入', async () => {
     const response = await globalThis.fetch(`http://127.0.0.1:${server.port}/probe`)
     await response.text()
   } finally {
+    ctx.dispose()
     globalThis.fetch = original
   }
 
@@ -135,6 +155,7 @@ test('保留头不会被真实写入', async () => {
     const response = await globalThis.fetch(`http://127.0.0.1:${server.port}/probe`)
     await response.text()
   } finally {
+    ctx.dispose()
     globalThis.fetch = original
   }
 

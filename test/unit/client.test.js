@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
+// 宿主侧的同名实现，用于对拍客户端手写复制件（见文件末尾的一致性用例）
+import { isUsableHeaderValue as hostIsUsableHeaderValue } from '../../lib/rules.js'
+
 // 客户端 bundle 是惰性 CJS：(function(root){ root.__ModuleLoader__.load({id, factory}) })(window)
 // 因此先在全局搭一个最小的 window 与 React 平台模块，再动态 import 去触发注册。
 
@@ -159,7 +162,7 @@ test('HEADER_NAME 接受合法头名并拒绝非法字符', () => {
   assert.equal(HEADER_NAME.test('bad:name'), false)
 })
 
-const { toConfig, headerProblems, sameDraft, cloneDraft, formUsable } = bundle.__internals
+const { toConfig, headerProblems, sameDraft, cloneDraft, formUsable, isUsableHeaderValue } = bundle.__internals
 
 test('toConfig 把有序数组折回字典并跳过空名称', () => {
   const config = toConfig({
@@ -222,6 +225,58 @@ test('headerProblems 报出非法 / 保留 / 重复三类问题', () => {
   ])
 })
 
+test('headerProblems 拦下 Headers.set 会拒绝的头值', () => {
+  const badValues = ['line\nbreak', 'cr\rhere', 'nul\x00here', '鸡', '😀']
+  for (const value of badValues) {
+    const problems = headerProblems({ headers: [{ name: 'x-a', value }] })
+    assert.deepEqual(
+      problems,
+      [{ name: 'x-a', reason: 'badValue' }],
+      `应当拦下 ${JSON.stringify(value)}`,
+    )
+  }
+})
+
+test('headerProblems 放行合法 Latin-1 头值', () => {
+  const okValues = ['', 'plain', 'é', 'çüé', '\u00ff', 'a'.repeat(200)]
+  for (const value of okValues) {
+    const problems = headerProblems({ headers: [{ name: 'x-a', value }] })
+    assert.deepEqual(problems, [], `应当放行 ${JSON.stringify(value)}`)
+  }
+})
+
+test('headerProblems 的 duplicate 与 badValue 可以同时上报', () => {
+  const problems = headerProblems({
+    headers: [
+      { name: 'x-a', value: '1' },
+      { name: 'x-a', value: 'bad\nvalue' },
+    ],
+  })
+  assert.deepEqual(
+    problems.map((p) => `${p.name}:${p.reason}`).sort(),
+    ['x-a:badValue', 'x-a:duplicate'],
+  )
+})
+
+test('客户端 isUsableHeaderValue 与宿主侧逐例一致', () => {
+  // client.js 是手写 CJS、无法 import ESM 的 lib/rules.js，只能复制一份实现；
+  // 这条用例就是防止两份实现漂移的护栏。
+  const cases = [
+    '', 'ok', '中文', 'line\nbreak', 'cr\rhere', '\x00', 'é', 'a'.repeat(10), '😀',
+    '\u00ff', '\u0100', 'tab\there', ' x ', 'x-\x7f',
+  ]
+  for (const value of cases) {
+    assert.equal(
+      isUsableHeaderValue(value),
+      hostIsUsableHeaderValue(value),
+      `mismatch for ${JSON.stringify(value)}`,
+    )
+  }
+  // null / undefined 也要一致（宿主用 ?? ''，客户端用 == null 判断）
+  assert.equal(isUsableHeaderValue(null), hostIsUsableHeaderValue(null))
+  assert.equal(isUsableHeaderValue(undefined), hostIsUsableHeaderValue(undefined))
+})
+
 test('sameDraft 做结构比较而非引用比较', () => {
   const draft = normalizeDraft({ rules: [{ headers: { 'x-a': '1' } }] })
   const copy = cloneDraft(draft)
@@ -243,4 +298,80 @@ test('formUsable 要求 mutate 与 state 同时存在', () => {
   assert.equal(formUsable(undefined), false)
   assert.equal(formUsable({ state: {} }), false)
   assert.equal(formUsable({ mutate: () => {}, state: {} }), true)
+})
+
+test('注入的 <style> 带 data-plugin 标记，且卸载时被移除（L10）', () => {
+  // 最小 document 替身：只支持 installStyles 用到的那几个 API
+  const appended = []
+  const doc = {
+    head: {
+      append: (node) => { appended.push(node) },
+    },
+    getElementById: () => null,
+    createElement: () => {
+      const attrs = {}
+      return {
+        id: '',
+        textContent: '',
+        parentNode: null,
+        setAttribute: (name, value) => { attrs[name] = value },
+        getAttribute: (name) => attrs[name],
+      }
+    },
+  }
+  const previous = globalThis.document
+  globalThis.document = doc
+  try {
+    const { ctx } = makeCtx()
+    bundle.apply(ctx)
+
+    assert.equal(appended.length, 1, '应注入一个 style 节点')
+    const style = appended[0]
+    assert.equal(style.id, 'dsh-request-injector-style')
+    // 宿主靠这个属性区分插件注入的样式，缺失会在清理时误删别人的节点
+    assert.equal(style.getAttribute('data-plugin'), 'dsh-request-injector')
+    assert.ok(style.textContent.includes('.dri-form'), '应写入插件样式表')
+  } finally {
+    globalThis.document = previous
+  }
+})
+
+test('样式安装发生在 effect 回调内，可在卸载时回收（L8）', () => {
+  const appended = []
+  const removed = []
+  const doc = {
+    head: { append: (node) => { appended.push(node) } },
+    getElementById: () => null,
+    createElement: () => ({
+      id: '',
+      textContent: '',
+      parentNode: { removeChild: (node) => { removed.push(node) } },
+      setAttribute: () => {},
+    }),
+  }
+  const previous = globalThis.document
+  globalThis.document = doc
+  try {
+    // 记录 effect 回调，先不执行 —— 若 installStyles 在 effect 之外被调用，
+    // 这里 appended 就会非空，说明副作用泄漏到了 effect 系统之外。
+    const disposers = []
+    const ctx = {
+      effect: (factory, label) => { disposers.push({ factory, label }) },
+      locale: { register: () => () => {} },
+      slots: { inject: () => {}, register: () => () => {} },
+    }
+    bundle.apply(ctx)
+
+    assert.equal(appended.length, 0, 'effect 未执行前不应注入样式')
+
+    const stylesEffect = disposers.find((entry) => entry.label === 'dsh-request-injector: styles')
+    assert.ok(stylesEffect, '应注册 styles effect')
+    const dispose = stylesEffect.factory()
+    assert.equal(appended.length, 1, 'effect 执行后才注入样式')
+
+    dispose()
+    assert.deepEqual(removed, appended, '卸载时应移除注入的 style 节点')
+  } finally {
+    globalThis.document = previous
+  }
 })
